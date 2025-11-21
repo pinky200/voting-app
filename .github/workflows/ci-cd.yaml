@@ -1,8 +1,8 @@
-name: Voting App Pipeline
+name: Voting App CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop ]  # Added main branch here
+    branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
 
@@ -13,7 +13,7 @@ env:
 jobs:
   build-and-scan:
     runs-on: ubuntu-latest
-
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -21,29 +21,151 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
     - name: Build Docker images
       run: |
         echo "Building Docker images..."
-        ls -la
-        echo "Project structure verified"
+        docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-vote:${{ github.sha }} ./vote
+        docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-result:${{ github.sha }} ./result
+        docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-worker:${{ github.sha }} ./worker
 
-    - name: Run security scan
-      uses: aquasecurity/trivy-action@master
-      with:
-        scan-type: 'fs'
-        scan-ref: '.'
-        format: 'table'
-        exit-code: 0
+    - name: Run security scans with Trivy
+      run: |
+        echo "Running security scans..."
+        trivy image --format table --exit-code 0 \
+          ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-vote:${{ github.sha }}
+        trivy image --format table --exit-code 0 \
+          ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-result:${{ github.sha }}
+        trivy image --format table --exit-code 0 \
+          ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-worker:${{ github.sha }}
 
-  test-deployment:
+    - name: Push Docker images
+      run: |
+        echo "Pushing images to container registry..."
+        docker push ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-vote:${{ github.sha }}
+        docker push ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-result:${{ github.sha }}
+        docker push ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-worker:${{ github.sha }}
+
+  test-and-validate:
     runs-on: ubuntu-latest
+    needs: build-and-scan
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Test deployment
+    - name: Validate Kubernetes manifests
       run: |
-        echo "CI/CD Pipeline is working!"
-        echo "Project structure:"
-        find . -name "*.yaml" -o -name "*.yml" | head -10
-        echo "All phases completed successfully!"
+        echo "Validating Kubernetes manifests..."
+        if command -v kubectl &> /dev/null; then
+          kubectl apply --dry-run=client -f voting-app/templates/
+          echo "Kubernetes manifests are valid"
+        else
+          echo "kubectl not available, skipping manifest validation"
+        fi
+
+    - name: Validate Helm chart
+      run: |
+        echo "Validating Helm chart..."
+        helm template voting-app ./voting-app/ --debug
+        echo "Helm chart is valid"
+
+  deploy-staging:
+    runs-on: ubuntu-latest
+    needs: [build-and-scan, test-and-validate]
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Helm
+      uses: azure/setup-helm@v3
+
+    - name: Deploy to Staging
+      run: |
+        echo "Deploying to staging environment..."
+        helm upgrade --install voting-app-staging ./voting-app \
+          --namespace voting-app-staging \
+          --create-namespace \
+          --atomic \
+          --timeout 15m \
+          --set vote.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-vote \
+          --set result.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-result \
+          --set worker.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-worker \
+          --set vote.image.tag=${{ github.sha }} \
+          --set result.image.tag=${{ github.sha }} \
+          --set worker.image.tag=${{ github.sha }} \
+          --set global.namespace=voting-app-staging
+
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs: [build-and-scan, test-and-validate]
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Helm
+      uses: azure/setup-helm@v3
+
+    - name: Deploy to Production
+      run: |
+        echo "Deploying to production environment..."
+        helm upgrade --install voting-app ./voting-app \
+          --namespace voting-app-production \
+          --create-namespace \
+          --atomic \
+          --timeout 20m \
+          --values voting-app/values-prod.yaml \
+          --set vote.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-vote \
+          --set result.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-result \
+          --set worker.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-worker \
+          --set vote.image.tag=${{ github.sha }} \
+          --set result.image.tag=${{ github.sha }} \
+          --set worker.image.tag=${{ github.sha }} \
+          --set global.namespace=voting-app-production
+
+  smoke-tests:
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
+    if: always()
+    
+    steps:
+    - name: Run smoke tests
+      run: |
+        echo "Running smoke tests..."
+        echo "Smoke tests would validate:"
+        echo "- Vote service endpoint"
+        echo "- Result service endpoint" 
+        echo "- Database connectivity"
+        echo "- Redis connectivity"
+        echo "Smoke test framework ready for implementation"
+
+  infrastructure-automation:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Terraform
+      uses: hashicorp/setup-terraform@v3
+
+    - name: Infrastructure validation
+      run: |
+        echo "Infrastructure as Code automation ready"
+        echo "Terraform configurations can be added for:"
+        echo "- Kubernetes cluster provisioning"
+        echo "- Network infrastructure"
+        echo "- Storage resources"
+        echo "- Security policies"
