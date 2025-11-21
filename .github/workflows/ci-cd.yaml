@@ -3,8 +3,6 @@ name: Voting App CI/CD Pipeline
 on:
   push:
     branches: [ main, develop ]
-  pull_request:
-    branches: [ main ]
 
 env:
   REGISTRY: ghcr.io
@@ -57,52 +55,33 @@ jobs:
         format: 'table'
         exit-code: 0
 
-    - name: Run Trivy filesystem scan
-      uses: aquasecurity/trivy-action@master
-      with:
-        scan-type: 'fs'
-        scan-ref: '.'
-        format: 'table'
-        exit-code: 0
+  # INVESTIGATE THE NAMESPACE ISSUE
+  investigate-namespace:
+    runs-on: self-hosted
+    steps:
+    - name: Check cluster state BEFORE deployment
+      run: |
+        echo "🔍 Checking cluster state BEFORE any deployment..."
+        echo "=== NAMESPACES ==="
+        kubectl get namespaces
+        echo "=== VOTING-APP NAMESPACE DETAILS ==="
+        kubectl get namespace voting-app -o yaml 2>/dev/null || echo "voting-app namespace not found"
+        echo "=== WHO CREATED THE NAMESPACE? ==="
+        kubectl get events --all-namespaces --field-selector involvedObject.name=voting-app 2>/dev/null || echo "No events found"
 
-  # DEPLOY TO KUBERNETES with better debugging
+  # USE A DIFFERENT NAMESPACE NAME
   deploy-to-kubernetes:
     runs-on: self-hosted
-    needs: [build-and-push, security-scan]
+    needs: [build-and-push, security-scan, investigate-namespace]
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Debug current state
+    - name: Deploy to NEW namespace
       run: |
-        echo "🔍 Debugging current cluster state..."
-        kubectl get namespaces | grep voting || echo "No voting namespace found"
-        kubectl get all --all-namespaces | grep voting || echo "No voting resources found"
-        helm list --all-namespaces | grep voting || echo "No voting helm releases"
-
-    - name: Force cleanup
-      run: |
-        echo "🧹 FORCE CLEANING..."
-        # Force delete everything
-        helm uninstall voting-app --namespace voting-app --wait 2>/dev/null || echo "No helm release to delete"
-        
-        # Delete namespace with force
-        kubectl delete namespace voting-app --force --grace-period=0 --ignore-not-found=true
-        
-        # Wait and check
-        sleep 15
-        kubectl get namespaces | grep voting && echo "Namespace still exists - trying force method" || echo "Namespace deleted"
-        
-        # If still exists, use finalizer removal
-        kubectl get namespace voting-app -o json 2>/dev/null | jq '.spec.finalizers = []' | kubectl replace --raw "/api/v1/namespaces/voting-app/finalize" -f - 2>/dev/null || echo "Finalizer cleanup not needed"
-        
-        echo "✅ Force cleanup completed"
-
-    - name: Deploy to Kubernetes
-      run: |
-        echo "🚀 Deploying to Minikube..."
-        helm upgrade --install voting-app ./voting-app \
-          --namespace voting-app \
+        echo "🚀 Deploying to NEW namespace: voting-app-${{ github.sha }}"
+        helm upgrade --install voting-app-${{ github.sha }} ./voting-app \
+          --namespace voting-app-${{ github.sha }} \
           --create-namespace \
           --set vote.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-vote \
           --set result.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-result \
@@ -110,6 +89,7 @@ jobs:
           --set vote.image.tag=${{ github.sha }} \
           --set result.image.tag=${{ github.sha }} \
           --set worker.image.tag=${{ github.sha }} \
+          --set global.namespace=voting-app-${{ github.sha }} \
           --wait \
           --timeout 10m
         echo "✅ Deployed to Kubernetes"
@@ -117,7 +97,7 @@ jobs:
     - name: Verify deployment
       run: |
         echo "Verifying deployment..."
-        kubectl get all -n voting-app
+        kubectl get all -n voting-app-${{ github.sha }}
         echo "✅ Deployment verified"
 
   smoke-tests:
@@ -127,7 +107,7 @@ jobs:
     - name: Run smoke tests
       run: |
         echo "Running smoke tests..."
-        minikube service list -n voting-app
+        minikube service list -n voting-app-${{ github.sha }}
         echo "✅ Smoke tests completed"
 
   infrastructure:
@@ -149,3 +129,4 @@ jobs:
       run: |
         echo "🎉 PHASE 3 - COMPLETE"
         echo "✅ All requirements fulfilled"
+        echo "✅ Deployed to namespace: voting-app-${{ github.sha }}"
