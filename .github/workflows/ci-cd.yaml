@@ -46,10 +46,16 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Run Trivy security scan on images
+    - name: Build images for security scan
+      run: |
+        docker build -t voting-app-vote:${{ github.sha }} ./vote
+        docker build -t voting-app-result:${{ github.sha }} ./result
+        docker build -t voting-app-worker:${{ github.sha }} ./worker
+
+    - name: Run Trivy security scan on local images
       uses: aquasecurity/trivy-action@master
       with:
-        image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-vote:${{ github.sha }}'
+        image-ref: 'voting-app-vote:${{ github.sha }}'
         format: 'table'
         exit-code: 0
 
