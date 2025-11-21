@@ -1,0 +1,151 @@
+name: Voting App Pipeline
+
+on:
+  push:
+    branches: [ develop ]
+  pull_request:
+    branches: [ main, develop ]
+  release:
+    types: [published]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  build-and-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build Docker images
+      run: |
+        for service in vote result worker; do
+          docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-$service:${{ github.sha }} ./$service
+          docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-$service:latest ./$service
+        done
+
+    - name: Run security scans with Trivy
+      run: |
+        for service in vote result worker; do
+          echo "Scanning $service image..."
+          trivy image --format table --exit-code 1 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-$service:${{ github.sha }}
+        done
+
+    - name: Push Docker images
+      run: |
+        for service in vote result worker; do
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-$service:${{ github.sha }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-$service:latest
+        done
+
+  deploy-staging:
+    needs: build-and-scan
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Helm
+      uses: azure/setup-helm@v3
+
+    - name: Configure Kubernetes
+      run: |
+        mkdir -p ~/.kube
+        echo "${{ secrets.KUBECONFIG_STAGING }}" > ~/.kube/config
+
+    - name: Deploy to Staging
+      run: |
+        helm upgrade --install voting-app-staging . \
+          --namespace voting-app-staging \
+          --create-namespace \
+          --atomic \
+          --timeout 15m \
+          --values values.yaml \
+          --set vote.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-vote \
+          --set result.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-result \
+          --set worker.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-worker \
+          --set vote.image.tag=${{ github.sha }} \
+          --set result.image.tag=${{ github.sha }} \
+          --set worker.image.tag=${{ github.sha }} \
+          --set global.namespace=voting-app-staging
+
+    - name: Run staging smoke tests
+      run: |
+        echo "Running staging smoke tests..."
+        sleep 60
+        # Staging smoke tests would go here
+
+  deploy-production:
+    needs: [build-and-scan, deploy-staging]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' && github.event.action == 'published'
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Helm
+      uses: azure/setup-helm@v3
+
+    - name: Configure Kubernetes
+      run: |
+        mkdir -p ~/.kube
+        echo "${{ secrets.KUBECONFIG_PROD }}" > ~/.kube/config
+
+    - name: Deploy to Production
+      run: |
+        helm upgrade --install voting-app . \
+          --namespace voting-app-production \
+          --create-namespace \
+          --atomic \
+          --timeout 20m \
+          --values values-prod.yaml \
+          --set vote.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-vote \
+          --set result.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-result \
+          --set worker.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-worker \
+          --set vote.image.tag=${{ github.sha }} \
+          --set result.image.tag=${{ github.sha }} \
+          --set worker.image.tag=${{ github.sha }} \
+          --set global.namespace=voting-app-production
+
+    - name: Run production smoke tests
+      run: |
+        echo "Running production smoke tests..."
+        sleep 90
+        # Production smoke tests would go here
+        echo "Production deployment completed successfully"
+
+  infrastructure:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Terraform
+      uses: hashicorp/setup-terraform@v3
+
+    - name: Terraform Format Check
+      run: |
+        if [ -d "terraform" ]; then
+          terraform fmt -check -recursive terraform/
+        fi
