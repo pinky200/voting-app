@@ -121,3 +121,4 @@ The application includes a seed service (`/seed-data`) that can populate the dat
 - Make sure to handle service startup order properly with health checks
 
 Good luck with your challenge! 🚀# Trigger CI/CD
+ 
