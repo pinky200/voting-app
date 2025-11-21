@@ -75,6 +75,14 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
+    - name: Clean up previous deployment
+      run: |
+        echo "🧹 Cleaning up previous deployment..."
+        helm uninstall voting-app --namespace voting-app 2>/dev/null || echo "No existing helm release"
+        kubectl delete namespace voting-app --ignore-not-found=true --wait=true
+        sleep 10
+        echo "✅ Cleanup completed"
+
     - name: Deploy to Kubernetes
       run: |
         echo "🚀 Deploying to Minikube..."
