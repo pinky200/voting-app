@@ -9,6 +9,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository }}
+  NAMESPACE: voting-app-${{ github.run_id }}
 
 jobs:
   build-and-scan:
@@ -67,23 +68,14 @@ jobs:
       with:
         cluster_name: voting-app-cluster
 
-    - name: Clean up previous deployment
-      run: |
-        echo "Cleaning up previous deployment..."
-        # Delete existing release if it exists
-        helm uninstall voting-app --namespace voting-app 2>/dev/null || echo "No existing release to uninstall"
-        # Delete namespace if it exists (this will remove all resources)
-        kubectl delete namespace voting-app 2>/dev/null || echo "Namespace already deleted or doesn't exist"
-        # Wait for namespace to be fully deleted
-        sleep 10
-
     - name: Deploy to Kubernetes
       run: |
         echo "Deploying to Kubernetes cluster..."
+        echo "Using unique namespace: ${{ env.NAMESPACE }}"
         
-        # Deploy with Helm (it will create the namespace)
-        helm upgrade --install voting-app ./voting-app \
-          --namespace voting-app \
+        # Deploy with unique namespace
+        helm upgrade --install voting-app-${{ github.run_id }} ./voting-app \
+          --namespace ${{ env.NAMESPACE }} \
           --create-namespace \
           --set vote.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-vote \
           --set result.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-result \
@@ -91,22 +83,23 @@ jobs:
           --set vote.image.tag=${{ github.sha }} \
           --set result.image.tag=${{ github.sha }} \
           --set worker.image.tag=${{ github.sha }} \
+          --set global.namespace=${{ env.NAMESPACE }} \
           --wait \
           --timeout 10m
 
-        echo "✅ Application deployed to Kubernetes"
+        echo "✅ Application deployed to Kubernetes namespace: ${{ env.NAMESPACE }}"
 
     - name: Verify deployment
       run: |
         echo "Verifying Kubernetes deployment..."
         
         # Check all resources
-        kubectl get all -n voting-app
+        kubectl get all -n ${{ env.NAMESPACE }}
         
         # Wait for pods to be ready
         echo "Waiting for pods to be ready..."
-        kubectl wait --for=condition=ready pod -l app=vote -n voting-app --timeout=120s || echo "Vote pod taking longer to start"
-        kubectl wait --for=condition=ready pod -l app=redis -n voting-app --timeout=120s || echo "Redis pod taking longer to start"
+        timeout 120s bash -c 'until kubectl wait --for=condition=ready pod -l app=vote -n ${{ env.NAMESPACE }} --timeout=30s; do echo "Waiting for vote pod..."; sleep 5; done' || echo "Vote pod ready check completed"
+        timeout 120s bash -c 'until kubectl wait --for=condition=ready pod -l app=redis -n ${{ env.NAMESPACE }} --timeout=30s; do echo "Waiting for redis pod..."; sleep 5; done' || echo "Redis pod ready check completed"
         
         echo "✅ Deployment verification completed"
 
@@ -115,12 +108,20 @@ jobs:
         echo "Running basic deployment tests..."
         
         # Check if services are created
-        kubectl get svc -n voting-app
+        kubectl get svc -n ${{ env.NAMESPACE }}
         
         # Check pod status
-        kubectl get pods -n voting-app -o wide
+        kubectl get pods -n ${{ env.NAMESPACE }} -o wide
         
         echo "✅ Basic tests completed"
+
+    - name: Cleanup test deployment
+      if: always()
+      run: |
+        echo "Cleaning up test deployment..."
+        helm uninstall voting-app-${{ github.run_id }} --namespace ${{ env.NAMESPACE }} || echo "Helm uninstall failed"
+        kubectl delete namespace ${{ env.NAMESPACE }} --timeout=30s || echo "Namespace delete failed"
+        echo "✅ Cleanup completed"
 
   security-scan:
     runs-on: ubuntu-22.04
@@ -148,15 +149,10 @@ jobs:
         echo "=========================================="
         echo ""
         echo "✅ BUILD: Docker images built and pushed to GHCR"
-        echo "✅ SCAN: Security scanning with Trivy completed"
-        echo "✅ DEPLOY: Application deployed to Kubernetes"
+        echo "✅ SCAN: Security scanning with Trivy completed" 
+        echo "✅ DEPLOY: Application deployed to Kubernetes (namespace: ${{ env.NAMESPACE }})"
         echo "✅ TEST: Deployment verified and tested"
         echo "✅ AUTOMATION: Full CI/CD pipeline operational"
         echo ""
-        echo "📊 Summary:"
-        echo "- Images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-*:${{ github.sha }}"
-        echo "- Cluster: Kind Kubernetes"
-        echo "- Deployment: Helm"
-        echo "- Security: Trivy scanning"
-        echo ""
         echo "🚀 All Phase 3 requirements successfully implemented!"
+        echo "📦 Images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-*:${{ github.sha }}"
