@@ -1,4 +1,4 @@
-name: Voting App CI/CD Pipeline
+name: Voting App Pipeline
 
 on:
   push:
