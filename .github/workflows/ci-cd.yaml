@@ -11,7 +11,6 @@ env:
   IMAGE_PREFIX: ${{ github.repository }}
 
 jobs:
-  # 1. BUILD AND PUSH DOCKER IMAGES
   build-and-push:
     runs-on: ubuntu-22.04
     steps:
@@ -39,7 +38,6 @@ jobs:
         docker push ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-worker:${{ github.sha }}
         echo "✅ Docker images built and pushed"
 
-  # 2. SECURITY SCANS
   security-scan:
     runs-on: ubuntu-22.04
     steps:
@@ -67,7 +65,7 @@ jobs:
         format: 'table'
         exit-code: 0
 
-  # 3. DEPLOY TO KUBERNETES (on self-hosted runner with minikube)
+  # DEPLOY TO KUBERNETES with better debugging
   deploy-to-kubernetes:
     runs-on: self-hosted
     needs: [build-and-push, security-scan]
@@ -75,13 +73,30 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Clean up previous deployment
+    - name: Debug current state
       run: |
-        echo "🧹 Cleaning up previous deployment..."
-        helm uninstall voting-app --namespace voting-app 2>/dev/null || echo "No existing helm release"
-        kubectl delete namespace voting-app --ignore-not-found=true --wait=true
-        sleep 10
-        echo "✅ Cleanup completed"
+        echo "🔍 Debugging current cluster state..."
+        kubectl get namespaces | grep voting || echo "No voting namespace found"
+        kubectl get all --all-namespaces | grep voting || echo "No voting resources found"
+        helm list --all-namespaces | grep voting || echo "No voting helm releases"
+
+    - name: Force cleanup
+      run: |
+        echo "🧹 FORCE CLEANING..."
+        # Force delete everything
+        helm uninstall voting-app --namespace voting-app --wait 2>/dev/null || echo "No helm release to delete"
+        
+        # Delete namespace with force
+        kubectl delete namespace voting-app --force --grace-period=0 --ignore-not-found=true
+        
+        # Wait and check
+        sleep 15
+        kubectl get namespaces | grep voting && echo "Namespace still exists - trying force method" || echo "Namespace deleted"
+        
+        # If still exists, use finalizer removal
+        kubectl get namespace voting-app -o json 2>/dev/null | jq '.spec.finalizers = []' | kubectl replace --raw "/api/v1/namespaces/voting-app/finalize" -f - 2>/dev/null || echo "Finalizer cleanup not needed"
+        
+        echo "✅ Force cleanup completed"
 
     - name: Deploy to Kubernetes
       run: |
@@ -105,7 +120,6 @@ jobs:
         kubectl get all -n voting-app
         echo "✅ Deployment verified"
 
-  # 4. SMOKE TESTS
   smoke-tests:
     runs-on: self-hosted
     needs: deploy-to-kubernetes
@@ -114,11 +128,8 @@ jobs:
       run: |
         echo "Running smoke tests..."
         minikube service list -n voting-app
-        echo "✅ Smoke tests - Services deployed and accessible"
-        echo "Vote service: minikube service vote -n voting-app --url"
-        echo "Result service: minikube service result -n voting-app --url"
+        echo "✅ Smoke tests completed"
 
-  # 5. INFRASTRUCTURE AS CODE
   infrastructure:
     runs-on: ubuntu-22.04
     steps:
@@ -128,9 +139,8 @@ jobs:
     - name: Validate IaC
       run: |
         helm template voting-app ./voting-app/ --debug
-        echo "✅ IaC validated - Helm charts working"
+        echo "✅ IaC validated"
 
-  # FINAL COMPLETION
   completion:
     runs-on: ubuntu-22.04
     needs: [build-and-push, security-scan, deploy-to-kubernetes, smoke-tests, infrastructure]
@@ -138,10 +148,4 @@ jobs:
     - name: Phase 3 Complete
       run: |
         echo "🎉 PHASE 3 - COMPLETE"
-        echo "✅ Builds and pushes Docker images"
-        echo "✅ Runs security scans (Trivy)"
-        echo "✅ Deploys automatically to Kubernetes"
-        echo "✅ Smoke tests for endpoints"
-        echo "✅ IaC automation (Helm)"
-        echo ""
-        echo "🚀 All requirements fulfilled"
+        echo "✅ All requirements fulfilled"
