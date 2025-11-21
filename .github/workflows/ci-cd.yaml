@@ -67,25 +67,17 @@ jobs:
         format: 'table'
         exit-code: 0
 
-  # 3. DEPLOY TO KUBERNETES
+  # 3. DEPLOY TO KUBERNETES (on self-hosted runner with minikube)
   deploy-to-kubernetes:
-    runs-on: ubuntu-22.04
+    runs-on: self-hosted
     needs: [build-and-push, security-scan]
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Set up Helm
-      uses: azure/setup-helm@v3
-
-    - name: Set up Minikube
-      uses: medyagh/setup-minikube@master
-      with:
-        driver: docker
-
     - name: Deploy to Kubernetes
       run: |
-        minikube start --driver=docker
+        echo "🚀 Deploying to Minikube..."
         helm upgrade --install voting-app ./voting-app \
           --namespace voting-app \
           --create-namespace \
@@ -99,13 +91,20 @@ jobs:
           --timeout 10m
         echo "✅ Deployed to Kubernetes"
 
+    - name: Verify deployment
+      run: |
+        echo "Verifying deployment..."
+        kubectl get all -n voting-app
+        echo "✅ Deployment verified"
+
   # 4. SMOKE TESTS
   smoke-tests:
-    runs-on: ubuntu-22.04
+    runs-on: self-hosted
     needs: deploy-to-kubernetes
     steps:
     - name: Run smoke tests
       run: |
+        echo "Running smoke tests..."
         minikube service list -n voting-app
         echo "✅ Smoke tests - Services deployed and accessible"
         echo "Vote service: minikube service vote -n voting-app --url"
