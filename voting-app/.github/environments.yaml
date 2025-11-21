@@ -1,0 +1,17 @@
+staging:
+  deployment_branch: develop
+  environment_url: https://staging-vote.example.com
+  protection_rules:
+    required_reviewers:
+      count: 1
+    wait_timer:
+      minutes: 0
+
+production:
+  deployment_branch: main
+  environment_url: https://vote.example.com
+  protection_rules:
+    required_reviewers:
+      count: 2
+    wait_timer:
+      minutes: 5

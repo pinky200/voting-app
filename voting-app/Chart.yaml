@@ -1,0 +1,19 @@
+apiVersion: v2
+name: voting-app
+description: A Helm chart for Kubernetes voting application
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+
+# Production metadata
+annotations:
+  category: Application
+  licenses: Apache-2.0
+  website: https://example.com/voting-app
+
+maintainers:
+  - name: DevOps Team
+    email: devops@example.com
+
+# Dependencies for production
+dependencies: []

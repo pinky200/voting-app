@@ -1,0 +1,130 @@
+# Global settings
+global:
+  namespace: voting-app
+
+# Environment specific settings
+environment: dev
+
+# Frontend services
+vote:
+  replicaCount: 2
+  image:
+    repository: devops-vote
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 80
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "128Mi"
+      cpu: "100m"
+
+result:
+  replicaCount: 2
+  image:
+    repository: devops-result
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 80
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "128Mi"
+      cpu: "100m"
+
+# Backend services
+worker:
+  replicaCount: 1
+  image:
+    repository: devops-worker
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "128Mi"
+      cpu: "100m"
+
+# Database configurations
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "postgres-password"
+    database: "voting_app"
+    username: "voting_user"
+    password: "voting_password"
+  primary:
+    persistence:
+      enabled: true
+      size: 1Gi
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "200m"
+
+redis:
+  enabled: true
+  auth:
+    enabled: false
+  architecture: standalone
+  master:
+    persistence:
+      enabled: true
+      size: 1Gi
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+  hosts:
+    - host: voting-app.local
+      paths:
+        - path: /
+          pathType: Prefix
+        - path: /results
+          pathType: Prefix
+
+# Network Policies
+networkPolicies:
+  enabled: true
+
+# Security
+security:
+  runAsNonRoot: true
+  runAsUser: 1001
+
+# CI/CD overrides
+images:
+  vote:
+    repository: devops-vote
+    tag: latest
+  result:
+    repository: devops-result  
+    tag: latest
+  worker:
+    repository: devops-worker
+    tag: latest

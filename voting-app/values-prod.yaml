@@ -1,0 +1,125 @@
+# Production environment values
+environment: prod
+
+global:
+  namespace: voting-app-production
+
+# Frontend services with higher resources
+vote:
+  replicaCount: 3
+  image:
+    repository: devops-vote
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: LoadBalancer
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+
+result:
+  replicaCount: 3
+  image:
+    repository: devops-result
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: LoadBalancer
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+
+# Backend services
+worker:
+  replicaCount: 2
+  image:
+    repository: devops-worker
+    tag: latest
+    pullPolicy: Always
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+
+# Production database with higher resources
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "production-password"
+    database: "voting_app"
+    username: "voting_user"
+    password: "production-db-password"
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "500m"
+      limits:
+        memory: "2Gi"
+        cpu: "1000m"
+
+# Production Redis
+redis:
+  enabled: true
+  auth:
+    enabled: true
+    password: "production-redis-password"
+  architecture: standalone
+  master:
+    persistence:
+      enabled: true
+      size: 5Gi
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "200m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+
+# Production ingress with TLS
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: vote.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+    - host: results.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts:
+        - vote.example.com
+        - results.example.com
+      secretName: voting-app-tls
+
+# Stricter network policies in production
+networkPolicies:
+  enabled: true
+
+# Enhanced security in production
+security:
+  runAsNonRoot: true
+  runAsUser: 1001
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
