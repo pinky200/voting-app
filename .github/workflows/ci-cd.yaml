@@ -3,15 +3,18 @@ name: Voting App CI/CD Pipeline
 on:
   push:
     branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_PREFIX: ${{ github.repository }}
+  IMAGE_PREFIX: ${{ github.repository_owner }}/${{ github.event.repository.name }}
 
 jobs:
-  # 1. BUILD AND PUSH DOCKER IMAGES
   build-and-push:
     runs-on: ubuntu-22.04
+    permissions:
+      packages: write
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -28,44 +31,34 @@ jobs:
 
     - name: Build and push Docker images
       run: |
-        docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-vote:${{ github.sha }} ./vote
-        docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-result:${{ github.sha }} ./result
-        docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-worker:${{ github.sha }} ./worker
-        
-        docker push ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-vote:${{ github.sha }}
-        docker push ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-result:${{ github.sha }}
-        docker push ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-worker:${{ github.sha }}
+        # Build and push each service
+        services=("vote" "result" "worker")
+        for service in "${services[@]}"; do
+          docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-$service:${{ github.sha }} ./$service
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-$service:${{ github.sha }}
+        done
         echo "✅ Docker images built and pushed"
 
-  # 2. SECURITY SCANS
   security-scan:
     runs-on: ubuntu-22.04
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Build images for security scan
-      run: |
-        docker build -t voting-app-vote:${{ github.sha }} ./vote
-        docker build -t voting-app-result:${{ github.sha }} ./result
-        docker build -t voting-app-worker:${{ github.sha }} ./worker
-
-    - name: Run Trivy security scan on local images
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: 'voting-app-vote:${{ github.sha }}'
-        format: 'table'
-        exit-code: 0
-
-    - name: Run Trivy filesystem scan
+    - name: Run Trivy vulnerability scanner
       uses: aquasecurity/trivy-action@master
       with:
         scan-type: 'fs'
         scan-ref: '.'
-        format: 'table'
-        exit-code: 0
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
 
-  # 3. DEPLOY TO KUBERNETES - WITH NAMESPACE FIX
   deploy-to-kubernetes:
     runs-on: ubuntu-22.04
     needs: [build-and-push, security-scan]
@@ -73,14 +66,20 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Set up Minikube
+    - name: Setup Minikube
       uses: medyagh/setup-minikube@master
+      with:
+        driver: docker
+        container-runtime: containerd
+
+    - name: Install Helm dependencies
+      run: |
+        cd voting-app
+        helm dependency update
 
     - name: Deploy to Kubernetes
       run: |
-        echo "🚀 Deploying Voting App to Kubernetes..."
-        # Use upgrade --install which handles existing releases
-        helm upgrade --install voting-app-${{ github.sha }} ./voting-app \
+        helm upgrade --install voting-app ./voting-app \
           --namespace voting-app-${{ github.sha }} \
           --create-namespace \
           --set vote.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-vote \
@@ -90,55 +89,40 @@ jobs:
           --set result.image.tag=${{ github.sha }} \
           --set worker.image.tag=${{ github.sha }} \
           --set global.namespace=voting-app-${{ github.sha }} \
+          --set postgresql.auth.password=test123 \
+          --set redis.auth.enabled=false \
           --wait \
           --timeout 10m
-        echo "✅ Application deployed to Kubernetes"
 
     - name: Verify deployment
       run: |
-        echo "Verifying deployment..."
-        kubectl get all -n voting-app-${{ github.sha }}
-        echo "✅ Deployment verified - Application is running!"
+        kubectl get pods,svc -n voting-app-${{ github.sha }}
+        kubectl wait --for=condition=ready pod -l app=vote -n voting-app-${{ github.sha }} --timeout=300s
 
-  # 4. SMOKE TESTS
   smoke-tests:
     runs-on: ubuntu-22.04
     needs: deploy-to-kubernetes
     steps:
     - name: Run smoke tests
       run: |
-        echo "Running smoke tests..."
-        minikube service list -n voting-app-${{ github.sha }}
-        echo "✅ Smoke tests completed - Services are accessible"
+        # Port-forward and test services
+        kubectl port-forward svc/vote 8080:80 -n voting-app-${{ github.sha }} &
+        sleep 10
+        curl -f http://localhost:8080/ && echo "Vote service is healthy"
+        
+        kubectl port-forward svc/result 8081:80 -n voting-app-${{ github.sha }} &
+        sleep 10  
+        curl -f http://localhost:8081/ && echo "Result service is healthy"
 
-  # 5. INFRASTRUCTURE AS CODE
-  infrastructure:
-    runs-on: ubuntu-22.04
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Validate IaC
-      run: |
-        helm template voting-app ./voting-app/ --debug
-        echo "✅ IaC validated - Helm charts working"
-
-  # FINAL COMPLETION
   completion:
     runs-on: ubuntu-22.04
-    needs: [build-and-push, security-scan, deploy-to-kubernetes, smoke-tests, infrastructure]
+    needs: [build-and-push, security-scan, deploy-to-kubernetes, smoke-tests]
     steps:
     - name: Phase 3 Complete
       run: |
-        echo "🎉 PHASE 3 - CI/CD PIPELINE: COMPLETE AND WORKING 🎉"
-        echo "===================================================="
-        echo ""
-        echo "✅ Builds and pushes Docker images"
-        echo "✅ Runs security scans (Trivy)"
-        echo "✅ Deploys automatically to Kubernetes"
+        echo "🎉 PHASE 3 COMPLETE! All requirements fulfilled:"
+        echo "✅ Automated Docker builds and pushes"
+        echo "✅ Security scanning with Trivy"
+        echo "✅ Automatic Kubernetes deployment"
         echo "✅ Smoke tests for endpoints"
-        echo "✅ IaC automation (Helm charts)"
-        echo ""
-        echo "🚀 All Phase 3 requirements successfully fulfilled!"
-        echo "📦 Application deployed and running in namespace: voting-app-${{ github.sha }}"
-        echo "📍 Access via: minikube service vote -n voting-app-${{ github.sha }} --url"
+        echo "✅ Infrastructure as Code (Helm)"
