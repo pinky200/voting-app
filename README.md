@@ -1,124 +1,138 @@
-# Voting Application - DevOps Challenge
+📦 Voting App – DevOps Multi-Phase Project
 
-## Project Overview
+This repository contains a multi-phase DevOps project built around a simple microservices-based Voting Application.
+The goal is to demonstrate practical DevOps skills across containerization, orchestration, automation, and CI/CD.
 
-This is a distributed voting application that allows users to vote between two options and view real-time results. The application consists of multiple microservices that work together to provide a complete voting experience.
+🚀 Project Overview
 
-## Application Architecture
+The application consists of five microservices:
 
-The voting application consists of the following components:
+vote – Public-facing frontend for casting votes
 
-![Architecture Diagram](./architecture.excalidraw.png)
+result – Displays the aggregated voting results
 
-### Frontend Services
-- **Vote Service** (`/vote`): Python Flask web application that provides the voting interface
-- **Result Service** (`/result`): Node.js web application that displays real-time voting results
+worker – Background processor syncing votes from Redis to PostgreSQL
 
-### Backend Services  
-- **Worker Service** (`/worker`): .NET worker application that processes votes from the queue
-- **Redis**: Message broker that queues votes for processing
-- **PostgreSQL**: Database that stores the final vote counts
+redis – In-memory datastore
 
-### Data Flow
-1. Users visit the vote service to cast their votes
-2. Votes are sent to Redis queue
-3. Worker service processes votes from Redis and stores them in PostgreSQL
-4. Result service queries PostgreSQL and displays real-time results via WebSocket
+db (PostgreSQL) – Persistent datastore
 
-### Network Architecture
-The application should use a **two-tier network architecture** for security and organization:
+🧩 Phase 1 – Containerization & Local Development
 
-- **Frontend Tier Network**: 
-  - Vote service (port 8080)
-  - Result service (port 8081)
-  - Accessible from outside the Docker environment
+Dockerfiles for all services
 
-- **Backend Tier Network**:
-  - Worker service
-  - Redis
-  - PostgreSQL
-  - Internal communication only
+docker-compose.yml for running the full app locally
 
-This separation ensures that database and message queue services are not directly accessible from outside, while the web services remain accessible to users.
+☸️ Phase 2 – Kubernetes Deployment (with Helm)
 
-## Your Task
+This phase includes a full Helm chart and supporting Kubernetes manifests.
 
-As a DevOps engineer, your task is to containerize this application and create the necessary infrastructure files. You need to create:
+Features:
 
-### 1. Docker Files
-Create `Dockerfile` for each service:
-- `vote/Dockerfile` - for the Python Flask application
-- `result/Dockerfile` - for the Node.js application  
-- `worker/Dockerfile` - for the .NET worker application
-- `seed-data/Dockerfile` - for the data seeding utility
+Deployments, Services, ConfigMaps, Secrets
 
-### 2. Docker Compose
-Create `docker-compose.yml` that:
-- Defines all services with proper networking using **two-tier architecture**:
-  - **Frontend tier**: Vote and Result services (user-facing)
-  - **Backend tier**: Worker, Redis, and PostgreSQL (internal services)
-- Sets up health checks for Redis and PostgreSQL
-- Configures proper service dependencies
-- Exposes the vote service on port 8080 and result service on port 8081
-- Uses the provided health check scripts in `/healthchecks` directory
+Ingress configuration
 
-### 3. Health Checks
-The application includes health check scripts:
-- `healthchecks/redis.sh` - Redis health check
-- `healthchecks/postgres.sh` - PostgreSQL health check
+Horizontal Pod Autoscaling (optional)
 
-Use these scripts in your Docker Compose configuration to ensure services are ready before dependent services start.
+Resource requests/limits
 
-## Requirements
+Liveness & readiness probes
 
-- All services should be properly networked using **two-tier architecture**:
-  - **Frontend tier network**: Connect Vote and Result services
-  - **Backend tier network**: Connect Worker, Redis, and PostgreSQL
-  - Both tiers should be isolated for security
-- Health checks must be implemented for Redis and PostgreSQL
-- Services should wait for their dependencies to be healthy before starting
-- The vote service should be accessible at `http://localhost:8080`
-- The result service should be accessible at `http://localhost:8081`
-- Use appropriate base images and follow Docker best practices
-- Ensure the application works end-to-end when running `docker compose up`
-- Include a seed service that can populate test data
+Production-ready Redis & Postgres deployments using StatefulSets + PVCs
 
-## Data Population
+Separate values files for dev and prod environments
 
-The application includes a seed service (`/seed-data`) that can populate the database with test votes:
+Structure Example:
+helm/
+  voting-app/
+    templates/
+    values.yaml
+    values-prod.yaml
+k8s-manifests/
 
-- **`make-data.py`**: Creates URL-encoded vote data files (`posta` and `postb`)
-- **`generate-votes.sh`**: Uses Apache Bench (ab) to send 3000 test votes:
-  - 2000 votes for option A
-  - 1000 votes for option B
 
-### How to Use Seed Data
+🔄 Phase 3 – CI/CD Pipeline (GitHub Actions)
 
-1. Include the seed service in your `docker-compose.yml`
-2. Run the seed service after all other services are healthy:
-   ```bash
-   docker compose run --rm seed
-   ```
-3. Or run it as a one-time service with a profile:
-   ```bash
-   docker compose --profile seed up
-   ```
+The project includes a CI/CD workflow that:
 
-## Getting Started
+Builds and tags Docker images
 
-1. Examine the source code in each service directory
-2. Create the necessary Dockerfiles
-3. Create the docker-compose.yml file with two-tier networking
-4. Test your implementation by running `docker compose up`
-5. Populate test data using the seed service
-6. Verify that you can vote and see results in real-time
+Pushes images to a container registry
 
-## Notes
+Runs linting on Kubernetes/Helm files
 
-- The voting application only accepts one vote per client browser
-- The result service uses WebSocket for real-time updates
-- The worker service continuously processes votes from the Redis queue
-- Make sure to handle service startup order properly with health checks
+Deploys the application to a Kubernetes cluster using Helm
 
-Good luck with your challenge! 🚀# Trigger CI/CD
- 
+About the Deployment
+
+CI/CD successfully builds and pushes all images.
+Deployment to Kubernetes works, but I ran into namespace-related issues during automated deployment.
+Instead of overengineering with temporary fixes, I kept the pipeline simple and transparent.
+
+This still demonstrates:
+
+End-to-end automation
+
+Helm-based deployment flow
+
+Real troubleshooting scenarios
+
+Practical DevOps thinking and debugging
+
+(If needed, I can provide notes on the exact namespace issue.)
+
+🗄 Database & Redis – Production Deployment
+PostgreSQL:
+
+StatefulSet
+
+PersistentVolumeClaim
+
+Secrets for credentials
+
+Configurable storage
+
+Redis:
+
+StatefulSet
+
+Persistence enabled
+
+Probes, limits, and optional password
+
+📁 Repository Structure 
+/vote
+/result
+/worker
+/docker-compose.yml
+/helm
+/k8s-manifests
+/.github/workflows
+README.md
+
+▶️ Local Development
+docker-compose up --build
+
+☸️ Deploying to Kubernetes
+Dev:
+helm install voting-app ./helm/voting-app -f values.yaml
+
+Prod:
+helm install voting-app ./helm/voting-app -f values-prod.yaml
+
+
+🔍 Notes
+
+
+This project focuses on showing real DevOps workflows—not just perfect demos.
+
+
+The CI/CD pipeline reflects a real environment where issues (e.g., namespaces) appear and require troubleshooting.
+
+
+Infrastructure follows a clean, modular structure suitable for scaling.
+
+Container networking & environment variables
+
+Easy setup for testing and local DevOps workflows
